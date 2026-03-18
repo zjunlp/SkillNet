@@ -37,3 +37,6 @@ skillnet = "skillnet_ai.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"skillnet_ai.prompts" = ["templates/*.md"]
