@@ -1,4 +1,3 @@
-
 Your task is to generate a complete skill package based on the following user description.
 
 # User's Skill Request:

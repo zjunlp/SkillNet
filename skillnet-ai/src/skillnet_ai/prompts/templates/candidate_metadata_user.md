@@ -1,4 +1,3 @@
-
 Your goal is to analyze an interaction trajectory and extract **reusable Skills**.
 
 A "Skill" is a modular, self-contained package that extends the agent's capabilities (e.g., "PDF Processor", "Market Analyzer", "Code Reviewer").

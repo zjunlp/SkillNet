@@ -1,4 +1,3 @@
-
 Your task is to map logical relationships between the provided skills based on their names and descriptions.
 
 You must strictly identify ONLY the following 4 types of relationships:

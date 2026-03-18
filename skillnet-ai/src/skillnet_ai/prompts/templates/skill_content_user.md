@@ -1,4 +1,3 @@
-
 Your task is to generate a **skill package** based on the provided execution trajectory, skill name, and skill description.
 This includes the main `SKILL.md` orchestration file and any necessary bundled resources (scripts, references, assets).
 

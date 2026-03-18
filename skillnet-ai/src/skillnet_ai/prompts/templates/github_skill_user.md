@@ -1,4 +1,3 @@
-
 Your task is to generate a complete skill package from the provided GitHub repository information.
 This includes the main `SKILL.md` orchestration file and any necessary bundled resources.
 

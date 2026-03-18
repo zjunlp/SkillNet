@@ -1,4 +1,3 @@
-
 Your task is to convert the following document content into a structured skill package.
 
 # Input: Document Content
