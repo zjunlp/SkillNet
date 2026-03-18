@@ -37,8 +37,3 @@ skillnet = "skillnet_ai.cli:app"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
-[dependency-groups]
-dev = [
-    "pytest>=8.4.2",
-]
