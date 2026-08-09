@@ -32,8 +32,10 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
 __all__ = [
+    "InjectionContent",
     "InjectionFinding",
     "InjectionReport",
+    "InjectionScanIssue",
     "SkillInjectionScanner",
     "SEVERITY_ORDER",
 ]
@@ -58,6 +60,26 @@ _BIDI_CONTROLS = {
     "\u2067": "RIGHT-TO-LEFT ISOLATE",
     "\u2068": "FIRST STRONG ISOLATE",
 }
+
+
+@dataclass(frozen=True)
+class InjectionContent:
+    """One in-memory content item to scan."""
+
+    path: str
+    content: str
+    is_script: bool = False
+
+
+@dataclass(frozen=True)
+class InjectionScanIssue:
+    """Content that could not be scanned completely."""
+
+    file: str
+    reason: str
+
+    def to_dict(self) -> Dict[str, str]:
+        return {"file": self.file, "reason": self.reason}
 
 
 @dataclass
@@ -87,10 +109,12 @@ class InjectionReport:
     """Aggregated scan result for one skill."""
 
     findings: List[InjectionFinding] = field(default_factory=list)
+    complete: bool = True
+    scan_issues: List[InjectionScanIssue] = field(default_factory=list)
 
     @property
     def clean(self) -> bool:
-        return not self.findings
+        return self.complete and not self.findings
 
     @property
     def max_severity(self) -> Optional[str]:
@@ -104,21 +128,35 @@ class InjectionReport:
             "max_severity": self.max_severity,
             "count": len(self.findings),
             "findings": [f.to_dict() for f in self.findings],
+            "complete": self.complete,
+            "scan_issues": [issue.to_dict() for issue in self.scan_issues],
         }
 
     def to_prompt_block(self, limit: int = 20) -> str:
         """Render findings for inclusion in the judge prompt as out-of-band evidence."""
+        lines: List[str] = []
+        if not self.complete:
+            lines.append(
+                "[Prompt-injection scan incomplete; unscanned content may contain "
+                "additional artifacts]"
+            )
+            lines.extend(
+                f"- [SCAN ISSUE] {issue.file}: {issue.reason}"
+                for issue in self.scan_issues
+            )
         if not self.findings:
-            return "[No suspected prompt-injection artifacts detected]"
+            return "\n".join(lines) if lines else (
+                "[No suspected prompt-injection artifacts detected]"
+            )
         ordered = sorted(
             self.findings,
             key=lambda f: (-SEVERITY_ORDER[f.severity], f.file, f.line),
         )
-        lines = [
+        lines.extend(
             f"- [{f.severity.upper()}] {f.rule_id} {f.file}:{f.line} — {f.message} "
             f"| excerpt: {f.excerpt}"
             for f in ordered[:limit]
-        ]
+        )
         if len(ordered) > limit:
             lines.append(f"- ...and {len(ordered) - limit} more finding(s)")
         return "\n".join(lines)
@@ -268,19 +306,63 @@ class SkillInjectionScanner:
     def scan_skill(self, skill_dir: str) -> InjectionReport:
         """Walk a skill directory and scan every prompt-reachable file."""
         report = InjectionReport()
+        if not os.path.exists(skill_dir):
+            self._add_issue(report, skill_dir, "Skill directory does not exist.")
+            return report
         if not os.path.isdir(skill_dir):
+            self._add_issue(report, skill_dir, "Scan target is not a directory.")
             return report
 
-        for root, dirs, files in os.walk(skill_dir):
+        def record_walk_error(error: OSError) -> None:
+            failed_path = error.filename or skill_dir
+            rel = os.path.relpath(failed_path, skill_dir)
+            self._add_issue(report, rel, f"Failed to scan directory: {error}")
+
+        for root, dirs, files in os.walk(skill_dir, onerror=record_walk_error):
             dirs[:] = [d for d in dirs if d not in {".git", "__pycache__", "node_modules"}]
             for name in sorted(files):
                 path = os.path.join(root, name)
                 rel = os.path.relpath(path, skill_dir)
                 lowered = name.lower()
                 if lowered.endswith(self.TEXT_SUFFIXES):
-                    report.findings.extend(self._scan_file(path, rel, scripts=False))
+                    self._scan_file(path, rel, scripts=False, report=report)
                 elif lowered.endswith(self.SCRIPT_SUFFIXES):
-                    report.findings.extend(self._scan_file(path, rel, scripts=True))
+                    self._scan_file(path, rel, scripts=True, report=report)
+        return report
+
+    def scan_contents(self, contents: Iterable[InjectionContent]) -> InjectionReport:
+        """Scan content already loaded by the evaluator."""
+        report = InjectionReport()
+        for item in contents:
+            if not isinstance(item, InjectionContent):
+                self._add_issue(
+                    report,
+                    "<unsupported>",
+                    "Scan target is not an InjectionContent instance.",
+                )
+                continue
+            if not item.path:
+                self._add_issue(report, "<missing>", "Scan target path is missing.")
+                continue
+            if not isinstance(item.content, str):
+                self._add_issue(
+                    report, item.path, "Scan target content is not text."
+                )
+                continue
+            content_bytes = len(item.content.encode("utf-8"))
+            if content_bytes > self.max_file_bytes:
+                self._add_issue(
+                    report,
+                    item.path,
+                    (
+                        f"Content size {content_bytes} bytes exceeds scan limit "
+                        f"{self.max_file_bytes} bytes."
+                    ),
+                )
+                continue
+            report.findings.extend(
+                self.scan_text(item.content, item.path, scripts=item.is_script)
+            )
         return report
 
     def scan_text(
@@ -297,15 +379,36 @@ class SkillInjectionScanner:
 
     # -- internals ---------------------------------------------------------
 
-    def _scan_file(self, path: str, rel: str, scripts: bool) -> List[InjectionFinding]:
+    def _scan_file(
+        self, path: str, rel: str, scripts: bool, report: InjectionReport
+    ) -> None:
         try:
-            if os.path.getsize(path) > self.max_file_bytes:
-                return []
+            file_bytes = os.path.getsize(path)
+        except OSError as error:
+            self._add_issue(report, rel, f"Failed to inspect file size: {error}")
+            return
+        if file_bytes > self.max_file_bytes:
+            self._add_issue(
+                report,
+                rel,
+                (
+                    f"File size {file_bytes} bytes exceeds scan limit "
+                    f"{self.max_file_bytes} bytes."
+                ),
+            )
+            return
+        try:
             with open(path, "r", encoding="utf-8", errors="replace") as fh:
                 text = fh.read()
-        except OSError:
-            return []
-        return self.scan_text(text, rel, scripts=scripts)
+        except OSError as error:
+            self._add_issue(report, rel, f"Failed to read file: {error}")
+            return
+        report.findings.extend(self.scan_text(text, rel, scripts=scripts))
+
+    @staticmethod
+    def _add_issue(report: InjectionReport, file: str, reason: str) -> None:
+        report.complete = False
+        report.scan_issues.append(InjectionScanIssue(file=file, reason=reason))
 
     def _apply_rules(self, text: str, filename: str, rules) -> List[InjectionFinding]:
         found: List[InjectionFinding] = []

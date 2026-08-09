@@ -16,7 +16,11 @@ from json_repair import repair_json
 from tqdm import tqdm
 
 from skillnet_ai.downloader import SkillDownloader
-from skillnet_ai.injection import InjectionReport, SkillInjectionScanner
+from skillnet_ai.injection import (
+    InjectionContent,
+    InjectionReport,
+    SkillInjectionScanner,
+)
 from skillnet_ai.prompts import SKILL_EVALUATION_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -35,7 +39,7 @@ class EvaluatorConfig:
     max_workers: int = 5
     temperature: float = 0.3
     cache_dir: str = "./evaluate_cache_dir"
-    run_scripts: bool = False
+    run_scripts: bool = False  # Enable only for trusted local skill code.
     script_timeout_sec: int = 8
     max_script_runs: int = 5
     script_python: str = "python"
@@ -187,48 +191,37 @@ class ScriptRunner:
         self.max_output_chars = max_output_chars
 
     def run_for_skill(
-        self, skill_dir: str, skip_paths: Optional[set] = None
+        self, skill_dir: str, skip_reason: Optional[str] = None
     ) -> List[ScriptExecutionResult]:
-        """Execute discovered scripts, except those in ``skip_paths``.
-
-        ``skip_paths`` holds skill-relative paths (as produced by the
-        injection pre-screen) that must not be executed — they are reported
-        as skipped rather than run.
-        """
-        skip_paths = skip_paths or set()
+        """Execute discovered scripts, or report every script as skipped."""
         scripts = self._discover_py_scripts(skill_dir)
+        if skip_reason:
+            return [
+                self._result_skipped(os.path.relpath(path, skill_dir), skip_reason)
+                for path in scripts
+            ]
+
         results: List[ScriptExecutionResult] = []
-        runnable: List[str] = []
-
-        for script_path in scripts:
-            rel_path = os.path.relpath(script_path, skill_dir)
-            if rel_path in skip_paths:
-                results.append(self._result_skipped_high_risk(rel_path))
-                continue
-            runnable.append(script_path)
-
-        for script_path in runnable[: self.max_runs]:
+        for script_path in scripts[: self.max_runs]:
             results.append(self._run_script(skill_dir, script_path))
 
-        if len(runnable) > self.max_runs:
+        if len(scripts) > self.max_runs:
             logger.info(
                 "Found %s runnable scripts, truncated to %s for execution",
-                len(runnable),
+                len(scripts),
                 self.max_runs
             )
 
         return results
 
-    def _result_skipped_high_risk(self, rel_path: str) -> ScriptExecutionResult:
+    def _result_skipped(
+        self, rel_path: str, reason: str
+    ) -> ScriptExecutionResult:
         return ScriptExecutionResult(
             path=rel_path,
             status="skipped",
             command="[not executed]",
-            note=(
-                "Skipped: the prompt-injection pre-screen flagged this script for "
-                "credential access, obfuscated exec, or outbound data transmission. "
-                "Inspect manually before running."
-            ),
+            note=reason,
         )
 
     def _discover_py_scripts(self, skill_dir: str) -> List[str]:
@@ -675,7 +668,14 @@ class PromptBuilder:
     @staticmethod
     def _fence(body: str, nonce: str) -> str:
         """Wrap untrusted content so it cannot terminate its own section."""
-        return f"{nonce}\n{body}\n{nonce}"
+        begin = f"<<<BEGIN UNTRUSTED {nonce}>>>"
+        end = f"<<<END UNTRUSTED {nonce}>>>"
+        escaped_body = body.replace(
+            begin, f"<<<ESCAPED BEGIN UNTRUSTED {nonce}>>>"
+        ).replace(
+            end, f"<<<ESCAPED END UNTRUSTED {nonce}>>>"
+        )
+        return f"{begin}\n{escaped_body}\n{end}"
     
     @staticmethod
     def build(skill: Skill, skill_md: Optional[str],
@@ -684,7 +684,17 @@ class PromptBuilder:
               script_exec_results: Optional[List[ScriptExecutionResult]] = None,
               injection_report: Optional[InjectionReport] = None) -> str:
         """Build the evaluation prompt for a given skill."""
-        nonce = f"<<<UNTRUSTED-{secrets.token_hex(8)}>>>"
+        nonce = secrets.token_hex(16)
+        metadata_block = PromptBuilder._fence(
+            "\n".join(
+                (
+                    f"- Name: {skill.name}",
+                    f"- Description: {skill.description or 'N/A'}",
+                    f"- Category: {skill.category or 'N/A'}",
+                )
+            ),
+            nonce,
+        )
         skill_md_block = skill_md or "[SKILL.md not found]"
 
         if references:
@@ -732,13 +742,8 @@ class PromptBuilder:
         injection_block = PromptBuilder._fence(injection_block, nonce)
 
         return SKILL_EVALUATION_PROMPT.format(
-            nonce=nonce,
+            metadata_block=metadata_block,
             injection_block=injection_block,
-            skill_name=skill.name,
-            skill_description=skill.description or "N/A",
-            category=skill.category or "N/A",
-            repo_name="N/A",
-            author="N/A",
             skill_md_block=skill_md_block,
             references_block=references_block,
             scripts_block=scripts_block,
@@ -866,11 +871,6 @@ class SkillEvaluator:
         results = evaluator.evaluate_batch(skills)
     """
 
-    #: injection.py rule ids that fire only on scripts/ files and indicate the
-    #: script itself is dangerous to run (credential access, obfuscated exec,
-    #: outbound data transmission) rather than merely a prompt-injection risk.
-    _SCRIPT_RISK_RULE_IDS = frozenset({"SN-INJ-007", "SN-INJ-008", "SN-INJ-009"})
-
     def __init__(self, config: EvaluatorConfig):
         """Initialize the evaluator with configuration."""
         if not config.api_key:
@@ -888,18 +888,33 @@ class SkillEvaluator:
             max_output_chars=config.max_script_output_chars
         )
 
-    @classmethod
-    def _high_risk_script_paths(
-        cls, injection_report: Optional[InjectionReport]
-    ) -> set:
-        """Relative paths of scripts the pre-screen flagged as unsafe to execute."""
-        if injection_report is None:
-            return set()
-        return {
-            f.file
-            for f in injection_report.findings
-            if f.rule_id in cls._SCRIPT_RISK_RULE_IDS
-        }
+    @staticmethod
+    def _injection_contents(
+        skill: Skill,
+        skill_md: Optional[str],
+        scripts: List[Dict[str, str]],
+        references: List[Dict[str, str]],
+    ) -> List[InjectionContent]:
+        contents = [
+            InjectionContent("metadata/name", str(skill.name)),
+            InjectionContent(
+                "metadata/description", str(skill.description or "N/A")
+            ),
+            InjectionContent("metadata/category", str(skill.category or "N/A")),
+            InjectionContent(
+                "SKILL.md", str(skill_md or "[SKILL.md not found]")
+            ),
+        ]
+        for items, is_script in ((references, False), (scripts, True)):
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                path = str(item.get("path") or "[unknown path]")
+                content = str(item.get("content") or "")
+                contents.append(
+                    InjectionContent(path, content, is_script=is_script)
+                )
+        return contents
 
     def evaluate(self, skill: Skill) -> Dict[str, Any]:
         """
@@ -917,22 +932,27 @@ class SkillEvaluator:
             scripts = self.loader.load_scripts(skill.path)
             references = self.loader.load_references(skill.path)
 
-            # Deterministic pre-screen of untrusted skill content. This runs
-            # *before* any script execution below so a script flagged for
-            # credential access, obfuscated exec, or outbound transmission can
-            # be skipped instead of run — a finding produced after
-            # subprocess.run() has already executed the script cannot undo
-            # whatever side effect (secret leak, outbound POST) it flags.
             injection_report: Optional[InjectionReport] = None
             if self.config.scan_injection:
-                injection_report = SkillInjectionScanner().scan_skill(skill.path)
+                loaded_contents = self._injection_contents(
+                    skill, skill_md, scripts, references
+                )
+                injection_report = SkillInjectionScanner().scan_contents(
+                    loaded_contents
+                )
 
             # Optional script execution
             script_exec_results: Optional[List[ScriptExecutionResult]] = None
             if self.config.run_scripts:
+                skip_reason = None
+                if skill.url:
+                    skip_reason = (
+                        "Skipped: remote third-party skill scripts are never "
+                        "executed, even when run_scripts=True."
+                    )
                 script_exec_results = self.script_runner.run_for_skill(
                     skill.path,
-                    skip_paths=self._high_risk_script_paths(injection_report),
+                    skip_reason=skip_reason,
                 )
 
             # Build prompt
