@@ -1,4 +1,5 @@
 import ast
+import inspect
 import json
 import re
 import logging
@@ -19,6 +20,7 @@ from skillnet_ai.downloader import SkillDownloader
 from skillnet_ai.injection import (
     InjectionContent,
     InjectionReport,
+    InjectionScanIssue,
     SkillInjectionScanner,
 )
 from skillnet_ai.prompts import SKILL_EVALUATION_PROMPT
@@ -544,6 +546,13 @@ class ScriptRunner:
 class SkillLoader:
     """Load SKILL.md, scripts, and reference files for a skill."""
 
+    IGNORED_DIRECTORY_NAMES = {
+        "__pycache__",
+        "env",
+        "node_modules",
+        "venv",
+    }
+    MAX_WALK_ENTRIES = 10_000
     REFERENCE_ALLOWED_EXTS = {
         ".md",
         ".txt",
@@ -558,50 +567,148 @@ class SkillLoader:
     }
     
     @staticmethod
-    def _walk_and_load(skill_dir: str, max_files: int, max_chars: int,
-                       root_filter: Callable[[str], bool],
-                       file_filter: Callable[[str], bool],
-                       skip_skill_md: bool) -> List[Dict[str, str]]:
+    def _record_scan_issue(
+        scan_issues: Optional[List[InjectionScanIssue]], file: str, reason: str
+    ) -> None:
+        if scan_issues is not None:
+            issue = InjectionScanIssue(file=file, reason=reason)
+            if issue not in scan_issues:
+                scan_issues.append(issue)
+
+    @staticmethod
+    def _walk_visible_files(
+        skill_dir: str,
+        scan_issues: Optional[List[InjectionScanIssue]] = None,
+    ) -> Iterator[Tuple[str, List[str]]]:
+        entries_seen = 0
+
+        def record_walk_error(error: OSError) -> None:
+            failed_path = error.filename or skill_dir
+            rel_path = os.path.relpath(failed_path, skill_dir)
+            SkillLoader._record_scan_issue(
+                scan_issues,
+                rel_path,
+                f"Failed to scan directory: {error}",
+            )
+
+        for root, dirs, files in os.walk(skill_dir, onerror=record_walk_error):
+            entries_seen += len(dirs) + len(files)
+            if entries_seen > SkillLoader.MAX_WALK_ENTRIES:
+                rel_root = os.path.relpath(root, skill_dir)
+                SkillLoader._record_scan_issue(
+                    scan_issues,
+                    rel_root,
+                    (
+                        f"Directory entry limit {SkillLoader.MAX_WALK_ENTRIES} "
+                        "exceeded; remaining files were not loaded or scanned."
+                    ),
+                )
+                return
+            dirs[:] = sorted(
+                directory
+                for directory in dirs
+                if not directory.startswith(".")
+                and directory.lower() not in SkillLoader.IGNORED_DIRECTORY_NAMES
+            )
+            visible_files = sorted(
+                filename for filename in files if not filename.startswith(".")
+            )
+            yield root, visible_files
+
+    @staticmethod
+    def _walk_and_load(
+        skill_dir: str,
+        max_files: int,
+        max_chars: int,
+        root_filter: Callable[[str], bool],
+        file_filter: Callable[[str], bool],
+        skip_skill_md: bool,
+        scan_issues: Optional[List[InjectionScanIssue]] = None,
+    ) -> List[Dict[str, str]]:
         items: List[Dict[str, str]] = []
-        for root, _, files in os.walk(skill_dir):
+        for root, files in SkillLoader._walk_visible_files(skill_dir, scan_issues):
             if not root_filter(root):
                 continue
             for filename in files:
-                if len(items) >= max_files:
-                    return items
                 if skip_skill_md and filename.lower() == "skill.md":
                     continue
                 if not file_filter(filename):
                     continue
                 filepath = os.path.join(root, filename)
                 rel_path = os.path.relpath(filepath, skill_dir)
+                if len(items) >= max_files:
+                    SkillLoader._record_scan_issue(
+                        scan_issues,
+                        rel_path,
+                        (
+                            f"File limit {max_files} reached; this file and any "
+                            "remaining eligible files were not loaded or scanned."
+                        ),
+                    )
+                    return items
                 try:
-                    with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read(max_chars)
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read(max_chars + 1)
+                    if len(content) > max_chars:
+                        SkillLoader._record_scan_issue(
+                            scan_issues,
+                            rel_path,
+                            f"Content was truncated at {max_chars} characters.",
+                        )
+                        content = content[:max_chars]
                     items.append({"path": rel_path, "content": content})
-                except Exception as e:
-                    logger.warning(f"Skip {filepath}: {e}")
+                except (OSError, UnicodeError) as e:
+                    logger.warning("Skip %s: %s", filepath, e)
+                    SkillLoader._record_scan_issue(
+                        scan_issues, rel_path, f"Failed to read content: {e}"
+                    )
         return items
     
     @staticmethod
-    def load_skill_md(skill_dir: str, max_chars: int = 12000) -> Optional[str]:
+    def load_skill_md(
+        skill_dir: str,
+        max_chars: int = 12000,
+        scan_issues: Optional[List[InjectionScanIssue]] = None,
+    ) -> Optional[str]:
         """Load SKILL.md content with optional truncation."""
-        path = SkillLoader._find_file(skill_dir, "skill.md")
+        path = SkillLoader._find_file(
+            skill_dir, "skill.md", scan_issues=scan_issues
+        )
         if not path:
-            logger.warning(f"SKILL.md not found in {skill_dir}")
+            logger.warning("SKILL.md not found in %s", skill_dir)
+            SkillLoader._record_scan_issue(
+                scan_issues, "SKILL.md", "SKILL.md was not found."
+            )
             return None
-        
-        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
-            content = f.read()
-        
+
+        rel_path = os.path.relpath(path, skill_dir)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read(max_chars + 1)
+        except (OSError, UnicodeError) as e:
+            logger.warning("Skip %s: %s", path, e)
+            SkillLoader._record_scan_issue(
+                scan_issues, rel_path, f"Failed to read content: {e}"
+            )
+            return None
+
         if len(content) > max_chars:
+            SkillLoader._record_scan_issue(
+                scan_issues,
+                rel_path,
+                f"Content was truncated at {max_chars} characters.",
+            )
             content = content[:max_chars] + "\n\n...[truncated]..."
-        
+
         return content
     
     @staticmethod
-    def load_scripts(skill_dir: str, max_files: int = 5, 
-                    max_chars: int = 1200) -> List[Dict[str, str]]:
+    def load_scripts(
+        skill_dir: str,
+        max_files: int = 5,
+        max_chars: int = 1200,
+        scan_issues: Optional[List[InjectionScanIssue]] = None,
+    ) -> List[Dict[str, str]]:
         """Load a sample of files under the scripts directory."""
         return SkillLoader._walk_and_load(
             skill_dir,
@@ -610,6 +717,7 @@ class SkillLoader:
             root_filter=lambda root: "scripts" in root.split(os.sep),
             file_filter=lambda _filename: True,
             skip_skill_md=False,
+            scan_issues=scan_issues,
         )
     
     @staticmethod
@@ -617,6 +725,7 @@ class SkillLoader:
         skill_dir: str,
         max_files: int = 10,
         max_chars: int = 4000,
+        scan_issues: Optional[List[InjectionScanIssue]] = None,
     ) -> List[Dict[str, str]]:
         """
         Load non-script reference files for a skill.
@@ -635,12 +744,17 @@ class SkillLoader:
             root_filter=lambda root: "scripts" not in root.split(os.sep),
             file_filter=file_filter,
             skip_skill_md=True,
+            scan_issues=scan_issues,
         )
 
     @staticmethod
-    def _find_file(directory: str, filename: str) -> Optional[str]:
+    def _find_file(
+        directory: str,
+        filename: str,
+        scan_issues: Optional[List[InjectionScanIssue]] = None,
+    ) -> Optional[str]:
         """Recursively find a file in directory (case-insensitive)."""
-        for root, _, files in os.walk(directory):
+        for root, files in SkillLoader._walk_visible_files(directory, scan_issues):
             for f in files:
                 if f.lower() == filename.lower():
                     return os.path.join(root, f)
@@ -916,6 +1030,26 @@ class SkillEvaluator:
                 )
         return contents
 
+    @staticmethod
+    def _load_with_scan_issues(
+        loader_method: Callable[..., Any],
+        skill_path: str,
+        scan_issues: List[InjectionScanIssue],
+    ) -> Any:
+        """Call current and legacy loaders without breaking method overrides."""
+        try:
+            parameters = inspect.signature(loader_method).parameters.values()
+        except (TypeError, ValueError):
+            return loader_method(skill_path)
+        supports_scan_issues = any(
+            parameter.name == "scan_issues"
+            or parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if supports_scan_issues:
+            return loader_method(skill_path, scan_issues=scan_issues)
+        return loader_method(skill_path)
+
     def evaluate(self, skill: Skill) -> Dict[str, Any]:
         """
         Evaluate a single skill.
@@ -928,9 +1062,16 @@ class SkillEvaluator:
         """
         try:
             # Load content
-            skill_md = self.loader.load_skill_md(skill.path)
-            scripts = self.loader.load_scripts(skill.path)
-            references = self.loader.load_references(skill.path)
+            load_issues: List[InjectionScanIssue] = []
+            skill_md = self._load_with_scan_issues(
+                self.loader.load_skill_md, skill.path, load_issues
+            )
+            scripts = self._load_with_scan_issues(
+                self.loader.load_scripts, skill.path, load_issues
+            )
+            references = self._load_with_scan_issues(
+                self.loader.load_references, skill.path, load_issues
+            )
 
             injection_report: Optional[InjectionReport] = None
             if self.config.scan_injection:
@@ -940,6 +1081,9 @@ class SkillEvaluator:
                 injection_report = SkillInjectionScanner().scan_contents(
                     loaded_contents
                 )
+                if load_issues:
+                    injection_report.complete = False
+                    injection_report.scan_issues.extend(load_issues)
 
             # Optional script execution
             script_exec_results: Optional[List[ScriptExecutionResult]] = None

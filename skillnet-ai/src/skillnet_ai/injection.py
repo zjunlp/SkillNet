@@ -28,6 +28,7 @@ import binascii
 import os
 import re
 import unicodedata
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional
 
@@ -62,6 +63,24 @@ _BIDI_CONTROLS = {
 }
 _JOINERS = frozenset({"\u200c", "\u200d"})
 _MAX_FINDINGS_PER_CONTENT = 100
+_SENSITIVE_IDENTIFIER = (
+    r"(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE[_-]?KEY|"
+    r"API[_-]?KEY|ACCESS[_-]?KEY)"
+)
+# Match secret-like variable names without treating URL text such as "/token" as data.
+_SENSITIVE_NAME = (
+    rf"(?<![A-Za-z0-9])(?:"
+    rf"(?:[A-Za-z0-9]+_)*{_SENSITIVE_IDENTIFIER}(?:_[A-Za-z0-9]+)*"
+    r"|(?-i:[a-z][A-Za-z0-9]*?(?:Token|Secret|Password|Credential|"
+    r"PrivateKey|ApiKey|AccessKey)(?:[A-Z0-9][A-Za-z0-9]*)?)"
+    rf")(?![A-Za-z0-9])"
+)
+# A GET is suspicious only when an argument value or authorization header carries it.
+_SENSITIVE_GET_SIGNAL = (
+    rf"(?:\{{\s*{_SENSITIVE_NAME}\s*\}}"
+    rf"|[:=]\s*{_SENSITIVE_NAME}"
+    r"|['\"]Authorization['\"]\s*:\s*[A-Za-z_][A-Za-z0-9_]*)"
+)
 
 
 @dataclass(frozen=True)
@@ -261,11 +280,9 @@ _SCRIPT_RULES = [
         "high",
         re.compile(
             r"\b(?:(?:os\.)?getenv|(?:os\.)?environ\.get)\s*\(\s*"
-            r"['\"][^'\"]*(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|"
-            r"PRIVATE[_-]?KEY|API[_-]?KEY|ACCESS[_-]?KEY)[^'\"]*['\"]"
+            rf"['\"][^'\"]*{_SENSITIVE_IDENTIFIER}[^'\"]*['\"]"
             r"|\b(?:os\.)?environ\s*\[\s*['\"][^'\"]*"
-            r"(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE[_-]?KEY|"
-            r"API[_-]?KEY|ACCESS[_-]?KEY)[^'\"]*['\"]\s*\]"
+            rf"{_SENSITIVE_IDENTIFIER}[^'\"]*['\"]\s*\]"
             r"|(\.aws/credentials|\.ssh/id_[a-z0-9_]+|\.netrc|/etc/shadow)",
             re.IGNORECASE,
         ),
@@ -293,10 +310,14 @@ _SCRIPT_RULES = [
             r"|\b(?:upload_file|upload_fileobj)\s*\("
             r"|\bcurl\b[^\n]{0,200}(?:--data(?:-binary|-raw|-urlencode)?|"
             r"-d\b|--upload-file|-T\b)"
-            r"|\bwget\b[^\n]{0,200}--post-(?:data|file)",
+            r"|\bwget\b[^\n]{0,200}--post-(?:data|file)"
+            rf"|\b(?:requests|httpx)\.get\s*\([^)]{{0,300}}{_SENSITIVE_GET_SIGNAL}"
+            rf"|\burllib\.request\.urlopen\s*\([^)]{{0,300}}"
+            rf"{_SENSITIVE_GET_SIGNAL}",
             re.IGNORECASE,
         ),
-        "Outbound write or upload; verify destination and payload.",
+        "Outbound write, upload, or explicit sensitive-data transmission; verify "
+        "destination and payload.",
     ),
 ]
 
@@ -363,7 +384,15 @@ class SkillInjectionScanner:
                     report, item.path, "Scan target content is not text."
                 )
                 continue
-            content_bytes = len(item.content.encode("utf-8"))
+            try:
+                content_bytes = len(item.content.encode("utf-8"))
+            except UnicodeEncodeError as error:
+                self._add_issue(
+                    report,
+                    item.path,
+                    f"Content is not valid UTF-8 text: {error}",
+                )
+                continue
             if content_bytes > self.max_file_bytes:
                 self._add_issue(
                     report,
@@ -384,16 +413,17 @@ class SkillInjectionScanner:
     ) -> List[InjectionFinding]:
         """Scan a single in-memory blob. Used for content already read by the caller."""
         findings: List[InjectionFinding] = []
-        findings.extend(
-            self._apply_rules(
-                text, filename, _TEXT_RULES, _MAX_FINDINGS_PER_CONTENT
+        if scripts:
+            findings.extend(
+                self._apply_rules(
+                    text, filename, _SCRIPT_RULES, _MAX_FINDINGS_PER_CONTENT
+                )
             )
+        remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
+        findings.extend(
+            self._apply_rules(text, filename, _TEXT_RULES, remaining)
         )
         if scripts:
-            remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
-            findings.extend(
-                self._apply_rules(text, filename, _SCRIPT_RULES, remaining)
-            )
             remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
             findings.extend(self._scan_b64(text, filename, remaining))
         remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
@@ -439,16 +469,25 @@ class SkillInjectionScanner:
         found: List[InjectionFinding] = []
         if limit <= 0:
             return found
+        newline_offsets = [
+            index for index, character in enumerate(text) if character == "\n"
+        ]
+        seen = set()
         for rule_id, severity, pattern, message in rules:
             for match in pattern.finditer(text):
-                line = text.count("\n", 0, match.start()) + 1
+                line = bisect_left(newline_offsets, match.start()) + 1
+                excerpt = self._excerpt(match.group(0))
+                key = (rule_id, line, excerpt)
+                if key in seen:
+                    continue
+                seen.add(key)
                 found.append(
                     InjectionFinding(
                         rule_id=rule_id,
                         severity=severity,
                         file=filename,
                         line=line,
-                        excerpt=self._excerpt(match.group(0)),
+                        excerpt=excerpt,
                         message=message,
                     )
                 )
