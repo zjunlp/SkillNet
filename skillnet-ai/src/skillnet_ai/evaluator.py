@@ -3,6 +3,7 @@ import json
 import re
 import logging
 import os
+import secrets
 import shlex
 import subprocess
 import time
@@ -15,6 +16,7 @@ from json_repair import repair_json
 from tqdm import tqdm
 
 from skillnet_ai.downloader import SkillDownloader
+from skillnet_ai.injection import InjectionReport, SkillInjectionScanner
 from skillnet_ai.prompts import SKILL_EVALUATION_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -40,6 +42,7 @@ class EvaluatorConfig:
     include_script_results: bool = False
     max_script_output_chars: int = 400
     github_token: Optional[str] = None
+    scan_injection: bool = True
 
 
 @dataclass
@@ -639,13 +642,20 @@ class PromptBuilder:
             content = item.get("content") or ""
             formatted.append(f"# {path}\n{content}\n")
         return "\n".join(formatted) if formatted else empty_message
+
+    @staticmethod
+    def _fence(body: str, nonce: str) -> str:
+        """Wrap untrusted content so it cannot terminate its own section."""
+        return f"{nonce}\n{body}\n{nonce}"
     
     @staticmethod
     def build(skill: Skill, skill_md: Optional[str],
               scripts: List[Dict[str, str]],
               references: Optional[List[Dict[str, str]]] = None,
-              script_exec_results: Optional[List[ScriptExecutionResult]] = None) -> str:
+              script_exec_results: Optional[List[ScriptExecutionResult]] = None,
+              injection_report: Optional[InjectionReport] = None) -> str:
         """Build the evaluation prompt for a given skill."""
+        nonce = f"<<<UNTRUSTED-{secrets.token_hex(8)}>>>"
         skill_md_block = skill_md or "[SKILL.md not found]"
 
         if references:
@@ -673,8 +683,20 @@ class PromptBuilder:
                 PromptBuilder._format_exec_result(r)
                 for r in script_exec_results
             )
-        
+
+        skill_md_block = PromptBuilder._fence(skill_md_block, nonce)
+        references_block = PromptBuilder._fence(references_block, nonce)
+        scripts_block = PromptBuilder._fence(scripts_block, nonce)
+
+        injection_block = (
+            injection_report.to_prompt_block()
+            if injection_report is not None
+            else "[Pre-screen not run]"
+        )
+
         return SKILL_EVALUATION_PROMPT.format(
+            nonce=nonce,
+            injection_block=injection_block,
             skill_name=skill.name,
             skill_description=skill.description or "N/A",
             category=skill.category or "N/A",
@@ -845,13 +867,19 @@ class SkillEvaluator:
             if self.config.run_scripts:
                 script_exec_results = self.script_runner.run_for_skill(skill.path)
 
+            # Deterministic pre-screen of untrusted skill content
+            injection_report: Optional[InjectionReport] = None
+            if self.config.scan_injection:
+                injection_report = SkillInjectionScanner().scan_skill(skill.path)
+
             # Build prompt
             prompt = self.prompt_builder.build(
                 skill,
                 skill_md,
                 scripts,
                 references=references,
-                script_exec_results=script_exec_results
+                script_exec_results=script_exec_results,
+                injection_report=injection_report,
             )
             
             # Call LLM
@@ -860,6 +888,8 @@ class SkillEvaluator:
                 result["script_execution"] = [
                     r.to_dict() for r in script_exec_results
                 ]
+            if injection_report is not None:
+                result["prompt_injection_scan"] = injection_report.to_dict()
             return result
             
         except Exception as e:
