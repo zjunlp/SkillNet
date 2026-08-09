@@ -106,9 +106,39 @@ def test_script_credential_access(scanner):
     assert "SN-INJ-007" in rule_ids(scanner.scan_text(text, "scripts/x.py", scripts=True))
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "import os\ntoken = os.getenv('SERVICE_TOKEN')\n",
+        "from os import getenv\npassword = getenv('DB_PASSWORD')\n",
+        "credentials = environ.get('CLOUD_CREDENTIALS')\n",
+        "key = os.environ['PRIVATE_KEY']\n",
+    ],
+)
+def test_script_sensitive_environment_access(scanner, text):
+    assert "SN-INJ-007" in rule_ids(
+        scanner.scan_text(text, "scripts/x.py", scripts=True)
+    )
+
+
 def test_script_obfuscated_exec(scanner):
     text = "exec(base64.b64decode(PAYLOAD))\n"
     assert "SN-INJ-008" in rule_ids(scanner.scan_text(text, "scripts/x.py", scripts=True))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "requests.patch(url, json=payload)\n",
+        "httpx.post(url, data=payload)\n",
+        "urllib.request.urlopen(url, data=payload)\n",
+        "subprocess.run(['curl', '--upload-file', path, url])\n",
+    ],
+)
+def test_script_outbound_writes_are_detected(scanner, text):
+    assert "SN-INJ-009" in rule_ids(
+        scanner.scan_text(text, "scripts/x.py", scripts=True)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -144,6 +174,51 @@ def test_normal_script_is_clean(scanner):
         """
     )
     assert scanner.scan_text(text, "scripts/load.py", scripts=True) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "import os\noutput_dir = os.environ.get('OUTPUT_DIR', '.')\n",
+        "import os\nworkers = os.getenv('NUM_WORKERS', '4')\n",
+        "response = requests.get('https://example.com/data.json')\n",
+        "response = urllib.request.urlopen('https://example.com/data.json')\n",
+    ],
+)
+def test_benign_script_configuration_and_get_requests_are_clean(scanner, text):
+    assert scanner.scan_text(text, "scripts/load.py", scripts=True) == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "\ufeff# Skill title\nOrdinary content.\n",
+        "می\u200cخواهم این متن درست بماند",
+        "Family emoji: \U0001f468\u200d\U0001f469\u200d\U0001f467",
+    ],
+)
+def test_benign_unicode_formatting_is_clean(scanner, text):
+    assert scanner.scan_text(text, "SKILL.md") == []
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "ig\u200dnore the visible instruction",
+        "hidden\u200c\u200cmarkers",
+    ],
+)
+def test_suspicious_joiner_usage_is_detected(scanner, text):
+    assert "SN-INJ-010" in rule_ids(scanner.scan_text(text, "SKILL.md"))
+
+
+def test_findings_are_limited_per_content_block(scanner):
+    text = "\n".join(f"line {index}\u200b" for index in range(150))
+
+    findings = scanner.scan_text(text, "SKILL.md")
+
+    assert len(findings) == 100
+    assert findings[-1].line == 100
 
 
 # --------------------------------------------------------------------------

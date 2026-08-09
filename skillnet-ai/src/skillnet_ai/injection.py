@@ -42,8 +42,8 @@ __all__ = [
 
 SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2}
 
-# Characters with no legitimate use in a SKILL.md that are routinely used to hide
-# instructions from human reviewers while remaining visible to a tokenizer.
+# Invisible formatting characters require context because some are valid in natural
+# language and emoji while others are commonly used to hide instructions.
 _ZERO_WIDTH = {
     "\u200b": "ZERO WIDTH SPACE",
     "\u200c": "ZERO WIDTH NON-JOINER",
@@ -60,6 +60,8 @@ _BIDI_CONTROLS = {
     "\u2067": "RIGHT-TO-LEFT ISOLATE",
     "\u2068": "FIRST STRONG ISOLATE",
 }
+_JOINERS = frozenset({"\u200c", "\u200d"})
+_MAX_FINDINGS_PER_CONTENT = 100
 
 
 @dataclass(frozen=True)
@@ -258,7 +260,12 @@ _SCRIPT_RULES = [
         "SN-INJ-007",
         "high",
         re.compile(
-            r"\b(os\.environ|getenv|environ\.get)\b[^\n]{0,120}?"
+            r"\b(?:(?:os\.)?getenv|(?:os\.)?environ\.get)\s*\(\s*"
+            r"['\"][^'\"]*(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|"
+            r"PRIVATE[_-]?KEY|API[_-]?KEY|ACCESS[_-]?KEY)[^'\"]*['\"]"
+            r"|\b(?:os\.)?environ\s*\[\s*['\"][^'\"]*"
+            r"(?:TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|PRIVATE[_-]?KEY|"
+            r"API[_-]?KEY|ACCESS[_-]?KEY)[^'\"]*['\"]\s*\]"
             r"|(\.aws/credentials|\.ssh/id_[a-z0-9_]+|\.netrc|/etc/shadow)",
             re.IGNORECASE,
         ),
@@ -278,11 +285,18 @@ _SCRIPT_RULES = [
         "SN-INJ-009",
         "medium",
         re.compile(
-            r"\b(requests\.(post|put)|urllib\.request\.urlopen|httpx\.(post|put)|"
-            r"curl\s+[^\n]*\s-(d|-data|T|-upload-file)|wget\s+[^\n]*--post-)",
+            r"\b(?:requests|httpx)\.(?:post|put|patch)\s*\("
+            r"|\b(?:requests|httpx)\.request\s*\(\s*['\"](?:post|put|patch)['\"]"
+            r"|\burllib\.request\.urlopen\s*\([^\n]{0,200}\bdata\s*="
+            r"|\burllib\.request\.Request\s*\([^\n]{0,200}\bmethod\s*=\s*"
+            r"['\"](?:post|put|patch)['\"]"
+            r"|\b(?:upload_file|upload_fileobj)\s*\("
+            r"|\bcurl\b[^\n]{0,200}(?:--data(?:-binary|-raw|-urlencode)?|"
+            r"-d\b|--upload-file|-T\b)"
+            r"|\bwget\b[^\n]{0,200}--post-(?:data|file)",
             re.IGNORECASE,
         ),
-        "Outbound data transmission; verify destination and payload.",
+        "Outbound write or upload; verify destination and payload.",
     ),
 ]
 
@@ -370,12 +384,21 @@ class SkillInjectionScanner:
     ) -> List[InjectionFinding]:
         """Scan a single in-memory blob. Used for content already read by the caller."""
         findings: List[InjectionFinding] = []
-        findings.extend(self._apply_rules(text, filename, _TEXT_RULES))
+        findings.extend(
+            self._apply_rules(
+                text, filename, _TEXT_RULES, _MAX_FINDINGS_PER_CONTENT
+            )
+        )
         if scripts:
-            findings.extend(self._apply_rules(text, filename, _SCRIPT_RULES))
-            findings.extend(self._scan_b64(text, filename))
-        findings.extend(self._scan_hidden_unicode(text, filename))
-        return self._dedupe(findings)
+            remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
+            findings.extend(
+                self._apply_rules(text, filename, _SCRIPT_RULES, remaining)
+            )
+            remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
+            findings.extend(self._scan_b64(text, filename, remaining))
+        remaining = _MAX_FINDINGS_PER_CONTENT - len(findings)
+        findings.extend(self._scan_hidden_unicode(text, filename, remaining))
+        return self._dedupe(findings)[:_MAX_FINDINGS_PER_CONTENT]
 
     # -- internals ---------------------------------------------------------
 
@@ -410,8 +433,12 @@ class SkillInjectionScanner:
         report.complete = False
         report.scan_issues.append(InjectionScanIssue(file=file, reason=reason))
 
-    def _apply_rules(self, text: str, filename: str, rules) -> List[InjectionFinding]:
+    def _apply_rules(
+        self, text: str, filename: str, rules, limit: int
+    ) -> List[InjectionFinding]:
         found: List[InjectionFinding] = []
+        if limit <= 0:
+            return found
         for rule_id, severity, pattern, message in rules:
             for match in pattern.finditer(text):
                 line = text.count("\n", 0, match.start()) + 1
@@ -425,18 +452,31 @@ class SkillInjectionScanner:
                         message=message,
                     )
                 )
+                if len(found) >= limit:
+                    return found
         return found
 
-    def _scan_hidden_unicode(self, text: str, filename: str) -> List[InjectionFinding]:
+    def _scan_hidden_unicode(
+        self, text: str, filename: str, limit: int
+    ) -> List[InjectionFinding]:
         found: List[InjectionFinding] = []
+        if limit <= 0:
+            return found
         seen_lines: Dict[int, set] = {}
+        line = 1
         for idx, ch in enumerate(text):
+            if ch == "\n":
+                line += 1
+                continue
             label = _ZERO_WIDTH.get(ch) or _BIDI_CONTROLS.get(ch)
             if label is None and 0xE0000 <= ord(ch) <= 0xE007F:
                 label = "UNICODE TAG CHARACTER"
             if label is None:
                 continue
-            line = text.count("\n", 0, idx) + 1
+            if ch == "\ufeff" and idx == 0:
+                continue
+            if ch in _JOINERS and not self._suspicious_joiner(text, idx):
+                continue
             bucket = seen_lines.setdefault(line, set())
             if label in bucket:
                 continue
@@ -455,10 +495,16 @@ class SkillInjectionScanner:
                     ),
                 )
             )
+            if len(found) >= limit:
+                return found
         return found
 
-    def _scan_b64(self, text: str, filename: str) -> List[InjectionFinding]:
+    def _scan_b64(
+        self, text: str, filename: str, limit: int
+    ) -> List[InjectionFinding]:
         found: List[InjectionFinding] = []
+        if limit <= 0:
+            return found
         for match in _B64_BLOB.finditer(text):
             blob = match.group(0)
             try:
@@ -468,7 +514,7 @@ class SkillInjectionScanner:
             printable = sum(ch.isprintable() or ch.isspace() for ch in decoded)
             if not decoded or printable / len(decoded) < 0.85:
                 continue
-            nested = self._apply_rules(decoded, filename, _TEXT_RULES)
+            nested = self._apply_rules(decoded, filename, _TEXT_RULES, 1)
             line = text.count("\n", 0, match.start()) + 1
             found.append(
                 InjectionFinding(
@@ -484,7 +530,24 @@ class SkillInjectionScanner:
                     ),
                 )
             )
+            if len(found) >= limit:
+                return found
         return found
+
+    @staticmethod
+    def _suspicious_joiner(text: str, index: int) -> bool:
+        previous = text[index - 1] if index > 0 else ""
+        following = text[index + 1] if index + 1 < len(text) else ""
+        repeated = previous in _JOINERS or following in _JOINERS
+        inside_ascii_word = (
+            SkillInjectionScanner._is_ascii_word_char(previous)
+            and SkillInjectionScanner._is_ascii_word_char(following)
+        )
+        return repeated or inside_ascii_word
+
+    @staticmethod
+    def _is_ascii_word_char(char: str) -> bool:
+        return bool(char) and char.isascii() and (char.isalnum() or char == "_")
 
     def _excerpt(self, raw: str) -> str:
         cleaned = " ".join(
