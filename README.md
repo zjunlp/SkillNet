@@ -469,11 +469,11 @@ Contributions are welcome: bug fixes, documentation, examples, integrations, and
 If SkillNet is useful in your research or agent system, please cite:
 
 ```bibtex
-@article{skillnet2026,
-  title   = {SkillNet: A Skill Ecosystem for AI Agents},
-  author  = {SkillNet Team},
-  journal = {arXiv preprint arXiv:2603.04448},
-  year    = {2026}
+@article{liang2026skillnet,
+  title={Skillnet: Create, evaluate, and connect ai skills},
+  author={Liang, Yuan and Zhong, Ruobin and Xu, Haoming and Jiang, Chen and Zhong, Yi and Fang, Runnan and Gu, Jia-Chen and Deng, Shumin and Yao, Yunzhi and Wang, Mengru and others},
+  journal={arXiv preprint arXiv:2603.04448},
+  year={2026}
 }
 ```
 
