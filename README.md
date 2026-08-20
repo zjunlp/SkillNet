@@ -75,6 +75,9 @@ No API key is required for search or public GitHub downloads.
 
 ## News
 
+- **[2026-08-20] SkillNet paper update.** **SkillNet-Gym** brings executable benchmarks for
+  skill construction, retrieval, and composition; **SkillNet-Fabric** provides task time routing
+  through a task specific Wiki. [Paper](https://arxiv.org/abs/2603.04448).
 - **[2026-07-11] SkillNet update.** The library now indexes 500K+ GitHub skills with improved deduplication, expands scientific-research and data-analysis skill coverage, and adds local scenario graphs plus orchestration.
 - **[2026-03-26] JiuwenClaw integration released.** JiuwenClaw now includes SkillNet as a built-in skill marketplace. [View guide](./examples/JiuwenClaw/README.md)
 - **[2026-03-12] SkillNet MCP server released.** MCP support is maintained by [CycleChain](https://github.com/CycleChain).
