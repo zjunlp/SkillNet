@@ -18,6 +18,7 @@ SkillNet treats agent skills as software assets: searchable, installable, inspec
 [![arXiv](https://img.shields.io/badge/arXiv-b5212f.svg?logo=arxiv)](https://arxiv.org/abs/2603.04448)
 [![Hugging Face](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-FFD21E)](https://huggingface.co/blog/xzwnlp/skillnet)
 [![Website](https://img.shields.io/badge/Website-skillnet.openkg.cn-0078D4.svg)](http://skillnet.openkg.cn/)
+[![On StackMap](https://img.shields.io/endpoint?url=https%3A%2F%2Fstackmap.shipwithai.xyz%2Fapi%2Fbadge%2Fskillnet.json)](https://stackmap.shipwithai.xyz/repos/zjunlp/skillnet?utm_source=badge)
 
 [Website](http://skillnet.openkg.cn/) · [Python SDK](./skillnet-ai) · [Examples](./examples) · [Experiments](./experiments) · [Paper](https://arxiv.org/abs/2603.04448)
 
