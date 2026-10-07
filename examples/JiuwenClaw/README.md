@@ -3,9 +3,7 @@
 本教程将指导你在 JiuwenClaw 中通过 SkillNet 技能库搜索、安装并使用海量技能，让你的 AI Agent 能力无限扩展。
 
 
-<video src="https://github.com/zjunlp/SkillNet/raw/main/assets/media/jiuwenclaw-demo.mp4" width="100%" controls>
-  <p>Your browser does not support the video tag. <a href="https://github.com/zjunlp/SkillNet/raw/main/assets/media/jiuwenclaw-demo.mp4">Download the video</a>.</p>
-</video>
+https://github.com/user-attachments/assets/28a460c8-45a3-44b6-b34f-bed4a49f2e32
 
 
 ## 简介
