@@ -395,9 +395,9 @@ configuration requirements.
 
 ### OpenClaw and JiuwenClaw
 
-[OpenClaw](https://github.com/openclaw/openclaw) includes SkillNet as a built-in
-skill; [JiuwenClaw](https://github.com/openJiuwen-ai/jiuwenclaw) integrates it into
-its skill marketplace. See the [JiuwenClaw guide](./examples/JiuwenClaw/README.md).
+SkillNet is available in [OpenClaw](https://github.com/openclaw/openclaw) as a
+skill, while [JiuwenClaw](https://github.com/openJiuwen-ai/jiuwenclaw) incorporates
+it into its skill marketplace. See the [JiuwenClaw guide](./examples/JiuwenClaw/README.md).
 
 The demo below shows SkillNet running inside OpenClaw to discover and use reusable skills.
 
