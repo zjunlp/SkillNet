@@ -20,6 +20,14 @@
 
 </div>
 
+<div align="center">
+
+<video src="https://github.com/zjunlp/SkillNet/raw/main/images/skillnet.mp4" width="100%" controls>
+  <p>Your browser does not support the video tag. <a href="https://github.com/zjunlp/SkillNet/raw/main/images/skillnet.mp4">Download the SkillNet video</a>.</p>
+</video>
+
+</div>
+
 ---
 
 SkillNet provides unified infrastructure for the agent skill lifecycle:
