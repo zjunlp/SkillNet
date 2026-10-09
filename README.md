@@ -22,7 +22,7 @@
 
 <div align="center">
 
-https://github.com/user-attachments/assets/a18cf8a5-4842-4774-be75-5481d08e1ba3
+<video src="https://github.com/user-attachments/assets/a18cf8a5-4842-4774-be75-5481d08e1ba3" controls="controls" width="800" preload="metadata"></video>
 
 </div>
 
@@ -86,7 +86,7 @@ The site also introduces [SkillNet-Gym](http://skillnet.openkg.cn/skillgym) for 
 
 <div align="center">
 
-https://github.com/user-attachments/assets/9f9d35b0-36fd-4d7d-a072-39afa380b241
+<video src="https://github.com/user-attachments/assets/9f9d35b0-36fd-4d7d-a072-39afa380b241" controls="controls" width="800" preload="metadata"></video>
 
 </div>
 
@@ -373,7 +373,7 @@ The demo below shows Claude Code using the SkillNet skill.
 
 <div align="center">
 
-https://github.com/user-attachments/assets/ae6020d9-6846-4672-84ce-fa9c8057e92b
+<video src="https://github.com/user-attachments/assets/ae6020d9-6846-4672-84ce-fa9c8057e92b" controls="controls" width="800" preload="metadata"></video>
 
 </div>
 
@@ -409,7 +409,7 @@ The demo below shows SkillNet running inside OpenClaw to discover and use reusab
 
 <div align="center">
 
-https://github.com/user-attachments/assets/9d49a00c-827d-47a4-8954-0e6b977ca547
+<video src="https://github.com/user-attachments/assets/9d49a00c-827d-47a4-8954-0e6b977ca547" controls="controls" width="800" preload="metadata"></video>
 
 </div>
 
