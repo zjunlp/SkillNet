@@ -22,6 +22,7 @@ from skillnet_ai.core.models import (
 from skillnet_ai.router.wiki import materialize_wiki
 
 if TYPE_CHECKING:
+    from skillnet_ai.router.dsh import DshExplorer
     from skillnet_ai.router.explorer import ClaudeExplorer, CodexExplorer
 
 
@@ -82,7 +83,7 @@ def route(
         return explore(wiki, query, candidates, k, endpoint, options, backend)
 
 
-def backend_for(name: str) -> "ClaudeExplorer | CodexExplorer":
+def backend_for(name: str) -> "ClaudeExplorer | CodexExplorer | DshExplorer":
     """Import only the requested runtime; never switch backends on failure."""
 
     if name == "claude":
@@ -93,7 +94,11 @@ def backend_for(name: str) -> "ClaudeExplorer | CodexExplorer":
         from skillnet_ai.router.explorer import CodexExplorer
 
         return CodexExplorer()
-    raise ValueError("Explorer backend must be claude or codex.")
+    if name == "dsh":
+        from skillnet_ai.router.dsh import DshExplorer
+
+        return DshExplorer()
+    raise ValueError("Explorer backend must be claude, codex or dsh.")
 
 
 def validate_selection(run: Exploration, candidates: list[AnalyzedSkill], k: int) -> RouteResult:

@@ -376,7 +376,7 @@ class SkillNetClient:
         *,
         index_dir: str | Path,
         k: int = 5,
-        backend: Literal["claude", "codex"] | None = None,
+        backend: Literal["claude", "codex", "dsh"] | None = None,
         explorer: Endpoint | None = None,
         embedding: Endpoint | None = None,
         options: RouteOptions | None = None,

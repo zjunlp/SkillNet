@@ -565,7 +565,7 @@ def route(
     query: str = typer.Argument(...),
     index_dir: Path = typer.Option(..., "--index-dir", exists=True, file_okay=False),
     k: int = typer.Option(5, "--k", min=1),
-    backend: str | None = typer.Option(None, "--backend", help="claude or codex"),
+    backend: str | None = typer.Option(None, "--backend", help="claude, codex or dsh"),
     seed_limit: int = typer.Option(24, "--seed-limit", min=1),
     candidate_limit: int = typer.Option(100, "--candidate-limit", min=1),
     max_depth: int = typer.Option(2, "--max-depth", min=0),
@@ -575,8 +575,8 @@ def route(
 ):
     """Choose up to k task-relevant skills using a configured Agent SDK."""
     try:
-        if backend not in {None, "claude", "codex"}:
-            raise ValueError("backend must be claude or codex")
+        if backend not in {None, "claude", "codex", "dsh"}:
+            raise ValueError("backend must be claude, codex or dsh")
         options = RouteOptions(
             seed_limit=seed_limit,
             candidate_limit=candidate_limit,

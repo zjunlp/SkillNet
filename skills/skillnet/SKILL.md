@@ -8,7 +8,7 @@ description: >-
   中文：搜索、下载、创建、评估、分析与路由技能。不用于普通代码修改或仅阅读文档。
 metadata:
   version: "0.1.1"
-  requirements: "Python 3.10+, skillnet-ai 0.1.1+, network; model API for create/evaluate/analyze; graph extra and embedding API for analyze/route; Claude or Codex SDK for route"
+  requirements: "Python 3.10+, skillnet-ai 0.1.1+, network; model API for create/evaluate/analyze; graph extra and embedding API for analyze/route; Claude, Codex or DSH SDK for route"
 ---
 
 # SkillNet

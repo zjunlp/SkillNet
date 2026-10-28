@@ -1,4 +1,5 @@
 recursive-include src/skillnet_ai/web/static *
+include src/skillnet_ai/router/dsh_wiki.mjs
 include src/skillnet_ai/web/ui/package.json
 include src/skillnet_ai/web/ui/package-lock.json
 include src/skillnet_ai/web/ui/tsconfig.json

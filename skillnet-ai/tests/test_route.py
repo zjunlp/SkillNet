@@ -44,6 +44,35 @@ def selection(skill_id: str = "stats") -> SkillSelection:
     )
 
 
+@pytest.mark.parametrize("skill_id", ["stats", "not-in-wiki"])
+def test_dsh_sdk_and_cli_use_shared_route_validation(
+    index: Path, monkeypatch: pytest.MonkeyPatch, skill_id: str
+) -> None:
+    """DSH must traverse normal routing and cannot bypass candidate validation."""
+    runtime = SimpleNamespace(
+        start=lambda: None,
+        run=lambda prompt: SimpleNamespace(
+            finish_reason="completed", final_response=selection(skill_id).model_dump_json()
+        ),
+        close=lambda: None,
+    )
+    monkeypatch.setitem(
+        sys.modules, "deepseek_harness", SimpleNamespace(DeepSeekHarness=lambda **kwargs: runtime)
+    )
+    if skill_id == "not-in-wiki":
+        with pytest.raises(ValueError, match="outside the task Wiki"):
+            SkillNetClient().route("CSV statistics", index_dir=index, backend="dsh")
+    else:
+        result = SkillNetClient().route("CSV statistics", index_dir=index, backend="dsh")
+        assert result.skills[0].path == str(index / "original/stats")
+    result = CliRunner().invoke(
+        app, ["route", "CSV statistics", "--index-dir", str(index), "--backend", "dsh", "--json"]
+    )
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is (skill_id == "stats")
+    assert result.exit_code == (0 if skill_id == "stats" else 1)
+
+
 @pytest.fixture
 def index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Persist three skill records without using analysis or any model."""

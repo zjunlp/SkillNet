@@ -14,7 +14,7 @@ preserved. `python -m skillnet_ai` exposes the same CLI.
 | `create [TRAJECTORY_FILE]` | Exactly one source: positional trajectory, `--github`, `--office`, `--prompt`; `--output-dir/-d`, `--model/-m`, `--max-files`, `--evaluate/--no-evaluate`, `--json-mode` |
 | `evaluate TARGET` | Local directory or GitHub skill URL; `--model/-m`, `--json-mode`, optional name/category/description overrides |
 | `analyze SKILLS_DIR` | `--output-dir`, `--model`, `--force`; direct child folders with `SKILL.md`; requires analysis and embedding endpoints |
-| `route QUERY` | `--index-dir` (required), `--k`, `--backend claude|codex`; requires embedding and Explorer endpoints |
+| `route QUERY` | `--index-dir` (required), `--k`, `--backend claude|codex|dsh`; requires embedding and Explorer endpoints |
 
 All accept `--json`. Plain `create` does not evaluate unless `--evaluate` is
 supplied. The skill's default workflow and legacy create helper enable evaluation.

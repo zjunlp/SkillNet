@@ -77,8 +77,8 @@ def _validate(values: dict) -> None:
                 )
         if key == "json_mode" and value not in {"auto", "on", "off"}:
             raise ValueError("json_mode must be auto, on or off.")
-        if key == "explorer_backend" and value not in {"claude", "codex"}:
-            raise ValueError("explorer_backend must be claude or codex.")
+        if key == "explorer_backend" and value not in {"claude", "codex", "dsh"}:
+            raise ValueError("explorer_backend must be claude, codex or dsh.")
 
 
 def read_config() -> dict:
@@ -197,6 +197,7 @@ def local_checks(settings: Settings) -> dict[str, object]:
                 ("graph", "numpy"),
                 ("claude", "claude_agent_sdk"),
                 ("codex", "openai_codex"),
+                ("dsh", "deepseek_harness"),
             )
         },
         "missing": [

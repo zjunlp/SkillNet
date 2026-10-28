@@ -131,6 +131,7 @@ Install optional dependencies for analysis and routing:
 pip install "skillnet-ai[graph]"         # scenario analysis
 pip install "skillnet-ai[graph,claude]"  # analysis and routing via Claude
 pip install "skillnet-ai[graph,codex]"   # analysis and routing via Codex
+pip install "skillnet-ai[graph,dsh]"     # analysis and routing via DeepSeek Harness
 ```
 
 ### Initialize
@@ -241,7 +242,7 @@ See [analysis options and index details](skillnet-ai/README.md#analyze).
 ### Route
 
 Select up to `k` skills for a task using an index created by `analyze`. Hybrid
-search and graph expansion identify candidates; a Claude or Codex Agent SDK
+search and graph expansion identify candidates; a Claude, Codex or DeepSeek Harness SDK
 compares them in a task Wiki containing skill profiles, relationships, and source text.
 
 ```python
@@ -293,7 +294,7 @@ check without a model call.
 Search and public downloads need no API key. Create, evaluate, and analyze use an
 OpenAI-compatible Chat Completions endpoint. Analyze also needs an embedding
 endpoint; route uses that same embedding endpoint and a separately configured
-Claude or Codex Agent SDK.
+Claude, Codex or DeepSeek Harness SDK.
 
 Settings resolve in this order: explicit arguments → environment variables →
 user configuration → defaults. Load any `.env` file into your environment before
@@ -310,7 +311,7 @@ calling the SDK; it does not load one automatically.
 | `EMBEDDING_API_KEY` | `analyze` and `route` | unset |
 | `EMBEDDING_BASE_URL` | `analyze` and `route` | unset |
 | `EMBEDDING_MODEL` | `analyze` and `route` | unset |
-| `SKILLNET_EXPLORER_BACKEND` | `route`: claude or codex | `claude` |
+| `SKILLNET_EXPLORER_BACKEND` | `route`: claude, codex or dsh | `claude` |
 | `SKILLNET_EXPLORER_API_KEY` | `route` SDK credential | unset |
 | `SKILLNET_EXPLORER_BASE_URL` | `route` SDK-compatible base URL | unset |
 | `SKILLNET_EXPLORER_MODEL` | `route` SDK model | unset |

@@ -236,7 +236,7 @@ class Selection(Record):
 
 
 class SkillSelection(Record):
-    """Structured output shared by both SDK backends."""
+    """Structured output shared by the SDK backends."""
 
     skills: list[Selection]
 

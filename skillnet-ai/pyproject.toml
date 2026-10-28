@@ -39,6 +39,7 @@ claude = [
     "claude-agent-sdk>=0.2.110,<0.3",
 ]
 codex = ["openai-codex>=0.144.4,<0.145"]
+dsh = ["deepseek-harness-sdk>=0.2.1rc2,<0.3"]
 graph = [
     "numpy>=1.24",
 ]
@@ -60,6 +61,7 @@ where = ["src"]
 namespaces = false
 
 [tool.setuptools.package-data]
+"skillnet_ai.router" = ["dsh_wiki.mjs"]
 "skillnet_ai.web" = ["static/**/*", "static/*"]
 
 [tool.ruff]
@@ -83,7 +85,7 @@ warn_unused_ignores = true
 follow_imports = "silent"
 
 [[tool.mypy.overrides]]
-module = ["claude_agent_sdk.*", "openai_codex.*"]
+module = ["claude_agent_sdk.*", "openai_codex.*", "deepseek_harness.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
