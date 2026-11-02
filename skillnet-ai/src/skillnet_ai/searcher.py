@@ -20,7 +20,7 @@ class SkillNetSearcher:
             skillnet_api_url=skillnet_api_url
         ).skillnet_api_url.rstrip("/")
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "SkillNet-Python-SDK/0.1.4"})
+        self.session.headers.update({"User-Agent": "SkillNet-Python-SDK/0.1.5"})
 
     def search(
         self,

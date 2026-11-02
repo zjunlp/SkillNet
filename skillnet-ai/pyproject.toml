@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "skillnet-ai"
-version = "0.1.4"
+version = "0.1.5"
 description = "Official Python SDK for SkillNet: Create, Evaluate, and Connect AI Skills."
 readme = "README.md"
 authors = [{ name = "SkillNet Team", email = "liangyuannnnn@gmail.com" }]

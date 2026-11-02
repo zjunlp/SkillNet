@@ -26,7 +26,8 @@ SDK call as a successful empty selection or substitute a retrieval-only result.
 `skillnet doctor --json` is offline. `--check-explorer` is an explicit, billable
 check of the chosen SDK's exploration and structured-output behavior.
 
-For DeepSeek Harness, install `skillnet-ai[graph,dsh]` and select `--backend dsh`
+For DeepSeek Harness, use skillnet-ai 0.1.5 or later. Install
+`skillnet-ai[graph,dsh]>=0.1.5` and select `--backend dsh`
 (or `SKILLNET_EXPLORER_BACKEND=dsh`). See the
 [DSH Explorer setup](https://github.com/zjunlp/SkillNet/blob/main/skillnet-ai/README.md#deepseek-harness-explorer)
 for its Messages-compatible endpoint configuration.

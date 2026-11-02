@@ -601,7 +601,8 @@ as `embedding` or `explorer`; import `Endpoint` from `skillnet_ai`. The analyze
 
 ### DeepSeek Harness Explorer
 
-Install `skillnet-ai[graph,dsh]` and configure a DeepSeek Messages-compatible
+DeepSeek Harness routing requires skillnet-ai 0.1.5 or later.
+Install `skillnet-ai[graph,dsh]>=0.1.5` and configure a DeepSeek Messages-compatible
 Explorer endpoint:
 
 ```bash
@@ -647,7 +648,7 @@ The top level contains the main capabilities: `searcher.py`, `downloader.py`,
 `creator.py`, `evaluator.py` and `analyzer.py`. Analysis owns source extraction,
 relationship construction and model-result caching. `router/` contains the routing
 flow (`router.py`), index construction/loading/retrieval (`index.py`), Wiki rendering
-(`wiki.py`) and both Agent SDK implementations (`explorer.py`).
+(`wiki.py`) and the Agent SDK implementations (`explorer.py`).
 
 `core/` contains data contracts, prompts, model requests, configuration, validation
 and the existing injection scanner. It does not import the business modules.
@@ -661,7 +662,7 @@ versions in `src/skillnet_ai/core/prompts.py` to invalidate obsolete cached resu
 From the `skillnet-ai/` directory:
 
 ```bash
-pip install -e ".[ui,graph,dev,claude,codex]"
+pip install -e ".[ui,graph,dev,claude,codex,dsh]"
 pytest -q
 mypy
 # Build the website before producing a wheel or source distribution (Node.js 20 or 22+).
