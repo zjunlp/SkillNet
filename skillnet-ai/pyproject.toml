@@ -61,7 +61,7 @@ where = ["src"]
 namespaces = false
 
 [tool.setuptools.package-data]
-"skillnet_ai.router" = ["dsh_wiki.mjs"]
+"skillnet_ai.router" = ["dsh.mjs"]
 "skillnet_ai.web" = ["static/**/*", "static/*"]
 
 [tool.ruff]

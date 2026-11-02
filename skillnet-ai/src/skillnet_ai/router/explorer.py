@@ -1,13 +1,15 @@
-"""SDK-managed Wiki exploration using Claude or Codex.
+"""SDK-managed Wiki exploration using Claude, Codex or DeepSeek Harness.
 
 SDK setup adapted from SkillFabric; Copyright (c) 2026 SkillFabric Contributors, MIT.
 """
 
 import asyncio
+import json
 import logging
 import re
 import sys
 import threading
+import time
 from collections import Counter
 from collections.abc import AsyncGenerator, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
@@ -24,6 +26,7 @@ from skillnet_ai.core.prompts import CODEX_EXPLORER_TOOLS, explorer_prompt, task
 if TYPE_CHECKING:
     from claude_agent_sdk import Message
     from claude_agent_sdk.types import HookContext, HookInput, HookJSONOutput
+    from deepseek_harness import RunResult
 
 logger = logging.getLogger(__name__)
 PATH_KEYS = {"Read": "file_path", "Glob": "path", "Grep": "path", "LS": "path"}
@@ -345,3 +348,149 @@ class CodexExplorer:
                     if not failed:
                         raise
                     logger.warning("Codex cleanup failed after a session error", exc_info=False)
+
+
+class DshExplorer:
+    """Run one SDK conversation; keep runtime state outside the supplied Wiki."""
+
+    def explore(
+        self, root: Path, query: str, k: int, endpoint: Endpoint, options: RouteOptions
+    ) -> Exploration:
+        try:
+            from deepseek_harness import DeepSeekHarness
+        except ImportError as exc:
+            raise ImportError("Install skillnet-ai[graph,dsh] to use this backend.") from exc
+
+        deadline = time.monotonic() + options.timeout
+        root = root.resolve()
+        read_limit = options.read_limit or 2 + 2 * k
+        api_key = endpoint.api_key.get_secret_value()
+        with TemporaryDirectory(prefix="skillnet-dsh-") as state_dir:
+            patch = Path(state_dir) / "wiki.patch.yml"
+            # JSON is valid YAML; override only the minimal profile's tool and upload rows.
+            entries: list[dict[str, object]] = [
+                {"id": name, "disabled": True}
+                for name in (
+                    "persistent-bash",
+                    "persistent-pwsh",
+                    "tool-fs",
+                    "tool-working-directory",
+                    "plugin-package-inventory-deepseek",
+                )
+            ]
+            entries += [
+                {"id": "session-log-deepseek", "config": {"enabled": False}},
+                {
+                    "insert": [
+                        {
+                            "id": "skillnet-wiki",
+                            "name": Path(__file__).with_name("dsh.mjs").as_uri(),
+                        }
+                    ]
+                },
+            ]
+            patch.write_text(json.dumps(entries), encoding="utf-8")
+            prompt = explorer_prompt(k, read_limit) + (
+                "\nUse only read_wiki and list_wiki with paths relative to this Wiki. "
+                "Return exactly one JSON object, without Markdown, matching this schema:\n"
+                + json.dumps(SkillSelection.model_json_schema())
+            )
+            client = DeepSeekHarness(
+                provider="deepseek-official",
+                model=endpoint.model,
+                reasoning_effort={"low": "low", "medium": "high", "high": "max"}[
+                    options.reasoning_effort
+                ],
+                max_tokens=8192,
+                cwd=str(root),
+                dsh_home=state_dir,
+                profile="sdk-minimal",
+                patches=(str(patch),),
+                base_url=endpoint.base_url,
+                api_key=api_key,
+                env={
+                    "DSH_SYSTEM_PROMPT": prompt,
+                    "SKILLNET_WIKI_ROOT": str(root),
+                    "SKILLNET_WIKI_READ_LIMIT": str(read_limit),
+                    "SKILLNET_WIKI_MAX_STEPS": str(options.max_turns),
+                },
+                initialize_timeout_seconds=options.timeout,
+                request_timeout_seconds=options.timeout,
+                shutdown_timeout_seconds=1,
+            )
+            expired = threading.Event()
+            watchdog: threading.Timer | None = None
+            failed = False
+
+            def remaining() -> float:
+                seconds = deadline - time.monotonic()
+                if seconds <= 0:
+                    raise TimeoutError(f"DSH Explorer exceeded {options.timeout:g} seconds.")
+                return seconds
+
+            def expire() -> None:
+                expired.set()
+                try:
+                    client.close()
+                except Exception:
+                    logger.warning("DSH timeout cleanup failed", exc_info=False)
+
+            try:
+                # Launch before arming cancellation: close() cannot cancel an unstarted runtime.
+                remaining()
+                client.client.start()
+                client.client.config.initialize_timeout_seconds = remaining()
+                session = client.start_session()
+                client.client.config.request_timeout_seconds = remaining()
+                watchdog = threading.Timer(remaining(), expire)
+                watchdog.daemon = True
+                watchdog.start()
+                # Session.run() uses the initialized runtime without implicitly restarting it.
+                remaining()
+                result = session.run(task_prompt(query))
+                remaining()
+                if result.finish_reason != "completed":
+                    raise RuntimeError(_dsh_failure(result, api_key))
+                return Exploration(SkillSelection.model_validate_json(result.final_response))
+            except BaseException as exc:
+                failed = True
+                if isinstance(exc, Exception) and (
+                    expired.is_set() or time.monotonic() >= deadline
+                ):
+                    raise TimeoutError(
+                        f"DSH Explorer exceeded {options.timeout:g} seconds."
+                    ) from exc
+                raise
+            finally:
+                if watchdog is not None:
+                    watchdog.cancel()
+                    if watchdog.is_alive():
+                        watchdog.join()
+                try:
+                    client.close()
+                except Exception:
+                    if not failed:
+                        raise
+                    logger.warning("DSH cleanup failed after a session error", exc_info=False)
+
+
+def _dsh_failure(result: "RunResult", api_key: str) -> str:
+    """Summarize the last turn's error and redact the configured API key."""
+    details = [f"DSH Explorer failed: {result.finish_reason}"]
+    for event in reversed(result.events):
+        if event.get("type") != "turn/end":
+            continue
+        data = event.get("data")
+        reason = data.get("reason") if isinstance(data, dict) else None
+        error = reason.get("error") if isinstance(reason, dict) else None
+        if isinstance(error, dict):
+            details.extend(
+                str(error[key])
+                for key in ("code", "status", "message")
+                if isinstance(error.get(key), (str, int))
+            )
+        break
+    message = ": ".join(details)
+    if api_key:
+        message = message.replace(api_key, "[REDACTED]")
+    return " ".join(message.split())[:1000]

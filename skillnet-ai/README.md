@@ -615,6 +615,8 @@ Replace the example URL and model with your provider's values. Python callers us
 settings remain separate. The SDK supplies its runtime and reads the task Wiki
 in an isolated session with read/list tools. `max_turns` limits model steps;
 low/medium/high reasoning maps to DSH low/high/max. Usage is returned as `None`.
+The timeout covers SDK startup and exploration; process launch and cleanup can delay
+return. If startup exhausts the budget, exploration does not begin.
 
 ---
 

@@ -22,8 +22,7 @@ from skillnet_ai.core.models import (
 from skillnet_ai.router.wiki import materialize_wiki
 
 if TYPE_CHECKING:
-    from skillnet_ai.router.dsh import DshExplorer
-    from skillnet_ai.router.explorer import ClaudeExplorer, CodexExplorer
+    from skillnet_ai.router.explorer import ClaudeExplorer, CodexExplorer, DshExplorer
 
 
 def route(
@@ -95,7 +94,7 @@ def backend_for(name: str) -> "ClaudeExplorer | CodexExplorer | DshExplorer":
 
         return CodexExplorer()
     if name == "dsh":
-        from skillnet_ai.router.dsh import DshExplorer
+        from skillnet_ai.router.explorer import DshExplorer
 
         return DshExplorer()
     raise ValueError("Explorer backend must be claude, codex or dsh.")
